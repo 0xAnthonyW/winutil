@@ -74,7 +74,7 @@ jobs:
           PRODUCT_NAME: ${{ github.event.inputs.product_name }}
           COMPANY_NAME: ${{ github.event.inputs.company_name }}
           FILE_VERSION: ${{ steps.meta.outputs.version }}
-          ICON_PATH: ${{ github.event.inputs.icon_path }}
+          ICON_PATH: assets/winutil.ico
         run: |
           $ErrorActionPreference = 'Stop'
 
