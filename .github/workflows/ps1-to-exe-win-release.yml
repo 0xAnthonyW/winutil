@@ -1,16 +1,13 @@
-name: PS1 → EXE (Windows Release)
+name: PS1 → EXE (Windows Release, start.exe only)
 
 on:
   push:
     branches: [ "master", "main" ]
     paths:
-      - "scripts/**/*.ps1"
+      - "scripts/start.ps1"
       - ".github/workflows/ps1-to-exe-win-release.yml"
   workflow_dispatch:
     inputs:
-      script_glob:
-        description: Glob of entry scripts
-        default: scripts/*.ps1
       gui:
         description: Build as GUI app (no console)
         type: choice
@@ -31,7 +28,7 @@ on:
         description: File version (a.b.c.d)
         default: 1.0.0.0
       icon_path:
-        description: Optional .ico path
+        description: Optional .ico path (repo-relative)
         default: ""
 
 permissions:
@@ -55,9 +52,10 @@ jobs:
           $shaShort = '${{ github.sha }}'.Substring(0,7)
           $run = '${{ github.run_number }}'
           $tag = "ps1-exe-$run-$shaShort"
-          $ver = if ('${{ github.event.inputs.file_version }}') { '${{ github.event.inputs.file_version }}' } else { '1.0.0.0' }
-          "tag=$tag"      | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          "version=$ver"  | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          $verIn = '${{ github.event.inputs.file_version }}'
+          $ver = if ($verIn) { $verIn } else { '1.0.0.0' }
+          "tag=$tag"     | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "version=$ver" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           Write-Host "Tag: $tag  Version: $ver"
 
       - name: Install PS2EXE
@@ -68,10 +66,9 @@ jobs:
           Install-Module ps2exe -Scope CurrentUser -Force -AllowClobber
           Import-Module ps2exe -Force
 
-      - name: Build EXEs
+      - name: Build start.exe
         shell: pwsh
         env:
-          SCRIPT_GLOB: ${{ github.event.inputs.script_glob }}
           GUI: ${{ github.event.inputs.gui }}
           REQUIRE_ADMIN: ${{ github.event.inputs.require_admin }}
           PRODUCT_NAME: ${{ github.event.inputs.product_name }}
@@ -80,72 +77,70 @@ jobs:
           ICON_PATH: ${{ github.event.inputs.icon_path }}
         run: |
           $ErrorActionPreference = 'Stop'
-          $glob = if ([string]::IsNullOrWhiteSpace($env:SCRIPT_GLOB)) { 'scripts/*.ps1' } else { $env:SCRIPT_GLOB }
+
+          $entry = Join-Path $PWD 'scripts/start.ps1'
+          if (-not (Test-Path $entry)) {
+            Write-Error "Entry script not found at $entry"
+            exit 1
+          }
 
           $outDir = Join-Path $PWD 'dist'
           if (Test-Path $outDir) { Remove-Item $outDir -Recurse -Force }
           New-Item -ItemType Directory -Path $outDir | Out-Null
 
-          $scripts = Get-ChildItem -Path $glob -File -ErrorAction SilentlyContinue |
-           Where-Object { $_.Name -notmatch '\.Tests?\.ps1$' }
-          if (-not $scripts) { Write-Error "No scripts matched '$glob'"; exit 1 }
+          $out  = Join-Path $outDir 'start.exe'
+          $meta = @{
+            Title        = if ($env:PRODUCT_NAME) { $env:PRODUCT_NAME } else { 'start' }
+            Product      = if ($env:PRODUCT_NAME) { $env:PRODUCT_NAME } else { 'start' }
+            Company      = $env:COMPANY_NAME
+            FileVersion  = $env:FILE_VERSION   # mapped to -Version
+            NoConsole    = ($env:GUI -eq 'true')
+            RequireAdmin = ($env:REQUIRE_ADMIN -eq 'true')
+            IconFile     = $null
+          }
 
-          foreach ($s in $scripts) {
-            $name = [IO.Path]::GetFileNameWithoutExtension($s.Name)
-            $out  = Join-Path $outDir "$name.exe"
+          # Optional per-script override at scripts/start.ps1.json
+          $jsonPath = "$entry.json"
+          if (Test-Path $jsonPath) {
+            try {
+              $j = Get-Content $jsonPath -Raw | ConvertFrom-Json
+              foreach ($k in 'Title','Product','Company','FileVersion','Version') {
+                if ($j.$k) { $meta[$k] = [string]$j.$k }
+              }
+              if ($j.NoConsole -ne $null)    { $meta['NoConsole']    = [bool]$j.NoConsole }
+              if ($j.RequireAdmin -ne $null) { $meta['RequireAdmin'] = [bool]$j.RequireAdmin }
+              if ($j.IconFile)               { $env:ICON_PATH = [string]$j.IconFile }
+            } catch { Write-Warning "Failed to parse $jsonPath; using defaults." }
+          }
 
-            $meta = @{
-              Title        = if ($env:PRODUCT_NAME) { $env:PRODUCT_NAME } else { $name }
-              Product      = if ($env:PRODUCT_NAME) { $env:PRODUCT_NAME } else { $name }
-              Company      = $env:COMPANY_NAME
-              FileVersion  = $env:FILE_VERSION      # will be mapped to -Version
-              NoConsole    = ($env:GUI -eq 'true')
-              RequireAdmin = ($env:REQUIRE_ADMIN -eq 'true')
-              IconFile     = $null
-            }
-
-            $jsonPath = "$($s.FullName).json"
-            if (Test-Path $jsonPath) {
-              try {
-                $j = Get-Content $jsonPath -Raw | ConvertFrom-Json
-                foreach ($k in 'Title','Product','Company','FileVersion','Version') {
-                  if ($j.$k) { $meta[$k] = [string]$j.$k }
-                }
-                if ($j.NoConsole -ne $null)    { $meta['NoConsole']    = [bool]$j.NoConsole }
-                if ($j.RequireAdmin -ne $null) { $meta['RequireAdmin'] = [bool]$j.RequireAdmin }
-                if ($j.IconFile)               { $env:ICON_PATH = [string]$j.IconFile }
-              } catch { Write-Warning "Failed to parse $jsonPath; using defaults." }
-            }
+          if ($env:ICON_PATH -and (Test-Path $env:ICON_PATH)) {
+            $meta['IconFile'] = (Resolve-Path $env:ICON_PATH).Path
+          }
 
           $params = @{
-            InputFile  = $s.FullName
+            InputFile  = $entry
             OutputFile = $out
             Title      = $meta.Title
             Product    = $meta.Product
             Company    = $meta.Company
-            Version    = ($meta.FileVersion ?? $meta.Version ?? '1.0.0.0')  # map to -Version
+            Version    = ($meta.FileVersion ?? $meta.Version ?? '1.0.0.0')  # ps2exe expects -Version
           }
           if ($meta.NoConsole)    { $params['NoConsole']    = $true }
           if ($meta.RequireAdmin) { $params['RequireAdmin'] = $true }
           if ($meta.IconFile)     { $params['IconFile']     = $meta.IconFile }
 
-          Write-Host "Building $($s.FullName) → $out"
+          Write-Host "Building $entry → $out"
           Invoke-ps2exe @params
-          }
 
-          if (-not (Get-ChildItem $outDir -Filter *.exe)) { Write-Error "No EXEs produced"; exit 1 }
+          if (-not (Test-Path $out)) { Write-Error "start.exe not produced"; exit 1 }
           Get-ChildItem $outDir -File | Format-Table -AutoSize
 
       - name: Upload artifact (CI)
         uses: actions/upload-artifact@v4
         with:
-          name: win-exes
-          path: dist/*.exe
+          name: start-exe
+          path: dist/start.exe
           if-no-files-found: error
-
-      - name: Zip EXEs
-        shell: pwsh
-        run: Compress-Archive -Path dist\* -DestinationPath ps1-exes-windows.zip
 
       - name: Create GitHub Release
         id: create_release
@@ -158,12 +153,12 @@ jobs:
           draft: false
           prerelease: false
 
-      - name: Upload Release Assets
+      - name: Upload start.exe to Release
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: ps1-exes-windows.zip
-          asset_name: ps1-exes-windows.zip
-          asset_content_type: application/zip
+          asset_path: dist/start.exe
+          asset_name: start.exe
+          asset_content_type: application/octet-stream
