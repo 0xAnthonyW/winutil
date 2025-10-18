@@ -98,7 +98,7 @@ jobs:
               Title        = if ($env:PRODUCT_NAME) { $env:PRODUCT_NAME } else { $name }
               Product      = if ($env:PRODUCT_NAME) { $env:PRODUCT_NAME } else { $name }
               Company      = $env:COMPANY_NAME
-              FileVersion  = $env:FILE_VERSION
+              FileVersion  = $env:FILE_VERSION      # will be mapped to -Version
               NoConsole    = ($env:GUI -eq 'true')
               RequireAdmin = ($env:REQUIRE_ADMIN -eq 'true')
               IconFile     = $null
@@ -108,31 +108,29 @@ jobs:
             if (Test-Path $jsonPath) {
               try {
                 $j = Get-Content $jsonPath -Raw | ConvertFrom-Json
-                foreach ($k in 'Title','Product','Company','FileVersion') { if ($j.$k) { $meta[$k] = [string]$j.$k } }
+                foreach ($k in 'Title','Product','Company','FileVersion','Version') {
+                  if ($j.$k) { $meta[$k] = [string]$j.$k }
+                }
                 if ($j.NoConsole -ne $null)    { $meta['NoConsole']    = [bool]$j.NoConsole }
                 if ($j.RequireAdmin -ne $null) { $meta['RequireAdmin'] = [bool]$j.RequireAdmin }
                 if ($j.IconFile)               { $env:ICON_PATH = [string]$j.IconFile }
               } catch { Write-Warning "Failed to parse $jsonPath; using defaults." }
             }
 
-            if ($env:ICON_PATH -and (Test-Path $env:ICON_PATH)) {
-              $meta['IconFile'] = (Resolve-Path $env:ICON_PATH).Path
-            }
+          $params = @{
+            InputFile  = $s.FullName
+            OutputFile = $out
+            Title      = $meta.Title
+            Product    = $meta.Product
+            Company    = $meta.Company
+            Version    = ($meta.FileVersion ?? $meta.Version ?? '1.0.0.0')  # map to -Version
+          }
+          if ($meta.NoConsole)    { $params['NoConsole']    = $true }
+          if ($meta.RequireAdmin) { $params['RequireAdmin'] = $true }
+          if ($meta.IconFile)     { $params['IconFile']     = $meta.IconFile }
 
-            $params = @{
-              InputFile   = $s.FullName
-              OutputFile  = $out
-              Title       = $meta.Title
-              Product     = $meta.Product
-              Company     = $meta.Company
-              FileVersion = $meta.FileVersion
-            }
-            if ($meta.NoConsole)    { $params['NoConsole']    = $true }
-            if ($meta.RequireAdmin) { $params['RequireAdmin'] = $true }
-            if ($meta.IconFile)     { $params['IconFile']     = $meta.IconFile }
-
-            Write-Host "Building $($s.FullName) → $out"
-            Invoke-ps2exe @params
+          Write-Host "Building $($s.FullName) → $out"
+          Invoke-ps2exe @params
           }
 
           if (-not (Get-ChildItem $outDir -Filter *.exe)) { Write-Error "No EXEs produced"; exit 1 }
