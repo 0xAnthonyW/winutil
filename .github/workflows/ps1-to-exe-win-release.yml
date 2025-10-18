@@ -1,0 +1,166 @@
+name: PS1 → EXE (Windows Release)
+
+on:
+  push:
+    branches: [ "master" ]
+    paths:
+      - "scripts/**/*.ps1"
+      - ".github/workflows/ps1-to-exe-win-release.yml"
+  workflow_dispatch:
+    inputs:
+      script_glob:
+        description: Glob of entry scripts to convert
+        default: scripts/{main,start}.ps1
+      gui:
+        description: Build as GUI app (no console)
+        type: choice
+        options: ["false","true"]
+        default: "false"
+      require_admin:
+        description: EXE requires elevation (UAC)
+        type: choice
+        options: ["false","true"]
+        default: "false"
+      product_name:
+        description: File/Product metadata
+        default: WinUtil
+      company_name:
+        description: Company metadata
+        default: "Anthony Walters"
+      file_version:
+        description: File version (a.b.c.d)
+        default: 1.0.0.0
+      icon_path:
+        description: Optional .ico path relative to repo root
+        default: ""
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  build-and-release:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version & tag name
+        id: meta
+        shell: pwsh
+        run: |
+          $tag = (git describe --tags --abbrev=0 2>$null)
+          if (-not $tag) {
+            $sha    = '${{ github.sha }}'
+            $short  = $sha.Substring(0,7)
+            $runNum = '${{ github.run_number }}'
+            $tag    = "win-$runNum-$short"
+          }
+          echo "tag=$tag"                    >> $env:GITHUB_OUTPUT
+          echo "version=$($tag.TrimStart('v'))" >> $env:GITHUB_OUTPUT
+
+      - name: Install PS2EXE
+        shell: pwsh
+        run: |
+          Set-ExecutionPolicy -Scope Process Bypass -Force
+          Set-PSRepository -Name PSGallery -InstallationPolicy Trusted
+          Install-Module ps2exe -Scope CurrentUser -Force -AllowClobber
+          Import-Module ps2exe -Force
+
+      - name: Build EXEs
+        shell: pwsh
+        env:
+          SCRIPT_GLOB: ${{ github.event.inputs.script_glob }}
+          GUI: ${{ github.event.inputs.gui }}
+          REQUIRE_ADMIN: ${{ github.event.inputs.require_admin }}
+          PRODUCT_NAME: ${{ github.event.inputs.product_name }}
+          COMPANY_NAME: ${{ github.event.inputs.company_name }}
+          FILE_VERSION: ${{ github.event.inputs.file_version }}
+          ICON_PATH: ${{ github.event.inputs.icon_path }}
+          FALLBACK_VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $glob = if ([string]::IsNullOrWhiteSpace($env:SCRIPT_GLOB)) { 'scripts/{main,start}.ps1' } else { $env:SCRIPT_GLOB }
+
+          $outDir = Join-Path $PWD 'dist'
+          if (Test-Path $outDir) { Remove-Item $outDir -Recurse -Force }
+          New-Item -ItemType Directory -Path $outDir | Out-Null
+
+          $scripts = Get-ChildItem -Path $glob -File -ErrorAction SilentlyContinue |
+                     Where-Object { $_.Name -notmatch '\.Tests?\.ps1$' }
+          if (-not $scripts) { Write-Host "No scripts matched '$glob'"; exit 1 }
+
+          foreach ($s in $scripts) {
+            $name = [IO.Path]::GetFileNameWithoutExtension($s.Name)
+            $out  = Join-Path $outDir "$name.exe"
+
+            # Default metadata
+            $meta = @{
+              Title        = if ($env:PRODUCT_NAME) { $env:PRODUCT_NAME } else { $name }
+              Product      = if ($env:PRODUCT_NAME) { $env:PRODUCT_NAME } else { $name }
+              Company      = $env:COMPANY_NAME
+              FileVersion  = if ($env:FILE_VERSION) { $env:FILE_VERSION } else { $env:FALLBACK_VERSION }
+              NoConsole    = ($env:GUI -eq 'true')
+              RequireAdmin = ($env:REQUIRE_ADMIN -eq 'true')
+              IconFile     = $null
+            }
+
+            # Optional per-script overrides next to the script (e.g., main.ps1.json)
+            $jsonPath = "$($s.FullName).json"
+            if (Test-Path $jsonPath) {
+              try {
+                $j = Get-Content $jsonPath -Raw | ConvertFrom-Json
+                foreach ($k in 'Title','Product','Company','FileVersion') { if ($j.$k) { $meta[$k] = [string]$j.$k } }
+                if ($j.NoConsole -ne $null)    { $meta['NoConsole']    = [bool]$j.NoConsole }
+                if ($j.RequireAdmin -ne $null) { $meta['RequireAdmin'] = [bool]$j.RequireAdmin }
+                if ($j.IconFile)               { $env:ICON_PATH = [string]$j.IconFile }
+              } catch { Write-Warning "Failed to parse $jsonPath; using defaults." }
+            }
+
+            if ($env:ICON_PATH -and (Test-Path $env:ICON_PATH)) {
+              $meta['IconFile'] = (Resolve-Path $env:ICON_PATH).Path
+            }
+
+            $params = @{
+              InputFile   = $s.FullName
+              OutputFile  = $out
+              Title       = $meta.Title
+              Product     = $meta.Product
+              Company     = $meta.Company
+              FileVersion = $meta.FileVersion.TrimStart('v')
+            }
+            if ($meta.NoConsole)    { $params['NoConsole']    = $true }
+            if ($meta.RequireAdmin) { $params['RequireAdmin'] = $true }
+            if ($meta.IconFile)     { $params['IconFile']     = $meta.IconFile }
+
+            Write-Host "Building $($s.FullName) → $out"
+            Invoke-ps2exe @params
+          }
+
+          Get-ChildItem $outDir -File | Format-Table -AutoSize
+
+      - name: Upload artifact (for CI browsing)
+        uses: actions/upload-artifact@v4
+        with:
+          name: win-exes
+          path: dist/*.exe
+          if-no-files-found: error
+
+      - name: Package ZIP
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist\* -DestinationPath "ps1-exes-windows.zip"
+
+      - name: Create/Update GitHub Release (Windows)
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.meta.outputs.tag }}
+          name: "PS1→EXE Windows (${{ steps.meta.outputs.tag }})"
+          draft: false
+          prerelease: false
+          files: |
+            ps1-exes-windows.zip
+            dist/*.exe
