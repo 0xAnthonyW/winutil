@@ -28,8 +28,8 @@ on:
         description: File version (a.b.c.d)
         default: 1.0.0.0
       icon_path:
-        description: Optional .ico path (repo-relative)
-        default: ""
+        description: ico path (repo-relative)
+        default: "assets/winutil.ico"
 
 permissions:
   contents: write
