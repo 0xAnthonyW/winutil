@@ -2,14 +2,14 @@ name: PS1 → EXE (Windows Release)
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [ "master", "main" ]
     paths:
       - "scripts/**/*.ps1"
       - ".github/workflows/ps1-to-exe-win-release.yml"
   workflow_dispatch:
     inputs:
       script_glob:
-        description: Glob of entry scripts to convert
+        description: Glob of entry scripts
         default: scripts/{main,start}.ps1
       gui:
         description: Build as GUI app (no console)
@@ -31,7 +31,7 @@ on:
         description: File version (a.b.c.d)
         default: 1.0.0.0
       icon_path:
-        description: Optional .ico path relative to repo root
+        description: Optional .ico path
         default: ""
 
 permissions:
@@ -48,19 +48,17 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Resolve version & tag name
+      - name: Resolve tag/version
         id: meta
         shell: pwsh
         run: |
-          $tag = (git describe --tags --abbrev=0 2>$null)
-          if (-not $tag) {
-            $sha    = '${{ github.sha }}'
-            $short  = $sha.Substring(0,7)
-            $runNum = '${{ github.run_number }}'
-            $tag    = "win-$runNum-$short"
-          }
-          echo "tag=$tag"                    >> $env:GITHUB_OUTPUT
-          echo "version=$($tag.TrimStart('v'))" >> $env:GITHUB_OUTPUT
+          $shaShort = '${{ github.sha }}'.Substring(0,7)
+          $run = '${{ github.run_number }}'
+          $tag = "ps1-exe-$run-$shaShort"
+          $ver = if ('${{ github.event.inputs.file_version }}') { '${{ github.event.inputs.file_version }}' } else { '1.0.0.0' }
+          "tag=$tag"      | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "version=$ver"  | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "Tag: $tag  Version: $ver"
 
       - name: Install PS2EXE
         shell: pwsh
@@ -78,9 +76,8 @@ jobs:
           REQUIRE_ADMIN: ${{ github.event.inputs.require_admin }}
           PRODUCT_NAME: ${{ github.event.inputs.product_name }}
           COMPANY_NAME: ${{ github.event.inputs.company_name }}
-          FILE_VERSION: ${{ github.event.inputs.file_version }}
+          FILE_VERSION: ${{ steps.meta.outputs.version }}
           ICON_PATH: ${{ github.event.inputs.icon_path }}
-          FALLBACK_VERSION: ${{ steps.meta.outputs.version }}
         run: |
           $ErrorActionPreference = 'Stop'
           $glob = if ([string]::IsNullOrWhiteSpace($env:SCRIPT_GLOB)) { 'scripts/{main,start}.ps1' } else { $env:SCRIPT_GLOB }
@@ -91,24 +88,22 @@ jobs:
 
           $scripts = Get-ChildItem -Path $glob -File -ErrorAction SilentlyContinue |
                      Where-Object { $_.Name -notmatch '\.Tests?\.ps1$' }
-          if (-not $scripts) { Write-Host "No scripts matched '$glob'"; exit 1 }
+          if (-not $scripts) { Write-Error "No scripts matched '$glob'"; exit 1 }
 
           foreach ($s in $scripts) {
             $name = [IO.Path]::GetFileNameWithoutExtension($s.Name)
             $out  = Join-Path $outDir "$name.exe"
 
-            # Default metadata
             $meta = @{
               Title        = if ($env:PRODUCT_NAME) { $env:PRODUCT_NAME } else { $name }
               Product      = if ($env:PRODUCT_NAME) { $env:PRODUCT_NAME } else { $name }
               Company      = $env:COMPANY_NAME
-              FileVersion  = if ($env:FILE_VERSION) { $env:FILE_VERSION } else { $env:FALLBACK_VERSION }
+              FileVersion  = $env:FILE_VERSION
               NoConsole    = ($env:GUI -eq 'true')
               RequireAdmin = ($env:REQUIRE_ADMIN -eq 'true')
               IconFile     = $null
             }
 
-            # Optional per-script overrides next to the script (e.g., main.ps1.json)
             $jsonPath = "$($s.FullName).json"
             if (Test-Path $jsonPath) {
               try {
@@ -130,7 +125,7 @@ jobs:
               Title       = $meta.Title
               Product     = $meta.Product
               Company     = $meta.Company
-              FileVersion = $meta.FileVersion.TrimStart('v')
+              FileVersion = $meta.FileVersion
             }
             if ($meta.NoConsole)    { $params['NoConsole']    = $true }
             if ($meta.RequireAdmin) { $params['RequireAdmin'] = $true }
@@ -140,27 +135,37 @@ jobs:
             Invoke-ps2exe @params
           }
 
+          if (-not (Get-ChildItem $outDir -Filter *.exe)) { Write-Error "No EXEs produced"; exit 1 }
           Get-ChildItem $outDir -File | Format-Table -AutoSize
 
-      - name: Upload artifact (for CI browsing)
+      - name: Upload artifact (CI)
         uses: actions/upload-artifact@v4
         with:
           name: win-exes
           path: dist/*.exe
           if-no-files-found: error
 
-      - name: Package ZIP
+      - name: Zip EXEs
         shell: pwsh
-        run: |
-          Compress-Archive -Path dist\* -DestinationPath "ps1-exes-windows.zip"
+        run: Compress-Archive -Path dist\* -DestinationPath ps1-exes-windows.zip
 
-      - name: Create/Update GitHub Release (Windows)
-        uses: softprops/action-gh-release@v2
+      - name: Create GitHub Release
+        id: create_release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
-          tag_name: ${{ steps.meta.outputs.tag }}
-          name: "PS1→EXE Windows (${{ steps.meta.outputs.tag }})"
+          tag_name:  ${{ steps.meta.outputs.tag }}
+          release_name: "PS1→EXE Windows (${{ steps.meta.outputs.tag }})"
           draft: false
           prerelease: false
-          files: |
-            ps1-exes-windows.zip
-            dist/*.exe
+
+      - name: Upload Release Assets
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: ps1-exes-windows.zip
+          asset_name: ps1-exes-windows.zip
+          asset_content_type: application/zip
