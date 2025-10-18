@@ -1,10 +1,11 @@
-name: PS1 → EXE (Windows Release, start.exe only)
+name: PS1 → EXE (Windows Release, winutil.exe)
 
 on:
   push:
     branches: [ "master", "main" ]
     paths:
       - "scripts/start.ps1"
+      - "assets/winutil.ico"
       - ".github/workflows/ps1-to-exe-win-release.yml"
   workflow_dispatch:
     inputs:
@@ -66,7 +67,7 @@ jobs:
           Install-Module ps2exe -Scope CurrentUser -Force -AllowClobber
           Import-Module ps2exe -Force
 
-      - name: Build start.exe
+      - name: Build winutil.exe
         shell: pwsh
         env:
           GUI: ${{ github.event.inputs.gui }}
@@ -74,7 +75,7 @@ jobs:
           PRODUCT_NAME: ${{ github.event.inputs.product_name }}
           COMPANY_NAME: ${{ github.event.inputs.company_name }}
           FILE_VERSION: ${{ steps.meta.outputs.version }}
-          ICON_PATH: assets/winutil.ico
+          ICON_PATH: ${{ github.event.inputs.icon_path }}
         run: |
           $ErrorActionPreference = 'Stop'
 
@@ -88,10 +89,11 @@ jobs:
           if (Test-Path $outDir) { Remove-Item $outDir -Recurse -Force }
           New-Item -ItemType Directory -Path $outDir | Out-Null
 
-          $out  = Join-Path $outDir 'start.exe'
+          # Output is now winutil.exe regardless of input name
+          $out  = Join-Path $outDir 'winutil.exe'
           $meta = @{
-            Title        = if ($env:PRODUCT_NAME) { $env:PRODUCT_NAME } else { 'start' }
-            Product      = if ($env:PRODUCT_NAME) { $env:PRODUCT_NAME } else { 'start' }
+            Title        = if ($env:PRODUCT_NAME) { $env:PRODUCT_NAME } else { 'WinUtil' }
+            Product      = if ($env:PRODUCT_NAME) { $env:PRODUCT_NAME } else { 'WinUtil' }
             Company      = $env:COMPANY_NAME
             FileVersion  = $env:FILE_VERSION   # mapped to -Version
             NoConsole    = ($env:GUI -eq 'true')
@@ -113,8 +115,23 @@ jobs:
             } catch { Write-Warning "Failed to parse $jsonPath; using defaults." }
           }
 
-          if ($env:ICON_PATH -and (Test-Path $env:ICON_PATH)) {
-            $meta['IconFile'] = (Resolve-Path $env:ICON_PATH).Path
+          # Resolve icon (input or fallback)
+          $iconCandidates = @()
+          if ($env:ICON_PATH) { $iconCandidates += $env:ICON_PATH }
+          $iconCandidates += 'assets/winutil.ico'
+
+          $resolvedIcon = $null
+          foreach ($p in $iconCandidates) {
+            if (-not [string]::IsNullOrWhiteSpace($p) -and (Test-Path $p)) {
+              $resolvedIcon = (Resolve-Path $p).Path
+              break
+            }
+          }
+          if ($resolvedIcon) {
+            $meta['IconFile'] = $resolvedIcon
+            Write-Host "Using icon: $resolvedIcon"
+          } else {
+            Write-Host "No icon applied."
           }
 
           $params = @{
@@ -132,14 +149,14 @@ jobs:
           Write-Host "Building $entry → $out"
           Invoke-ps2exe @params
 
-          if (-not (Test-Path $out)) { Write-Error "start.exe not produced"; exit 1 }
+          if (-not (Test-Path $out)) { Write-Error "winutil.exe not produced"; exit 1 }
           Get-ChildItem $outDir -File | Format-Table -AutoSize
 
       - name: Upload artifact (CI)
         uses: actions/upload-artifact@v4
         with:
-          name: start-exe
-          path: dist/start.exe
+          name: winutil-exe
+          path: dist/winutil.exe
           if-no-files-found: error
 
       - name: Create GitHub Release
@@ -153,12 +170,12 @@ jobs:
           draft: false
           prerelease: false
 
-      - name: Upload start.exe to Release
+      - name: Upload winutil.exe to Release
         uses: actions/upload-release-asset@v1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: dist/start.exe
-          asset_name: start.exe
+          asset_path: dist/winutil.exe
+          asset_name: winutil.exe
           asset_content_type: application/octet-stream
