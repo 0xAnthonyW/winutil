@@ -7,43 +7,31 @@
 #>
 
 param (
-    [switch]$Debug,
     [string]$Config,
-    [switch]$Run
+    [ValidateSet("Standard", "Minimal", "Advanced")]
+    [string]$Preset,
+    [switch]$Noui,
+    [switch]$Offline
 )
-
-# Set DebugPreference based on the -Debug switch
-if ($Debug) {
-    $DebugPreference = "Continue"
-}
 
 if ($Config) {
     $PARAM_CONFIG = $Config
 }
 
-$PARAM_RUN = $false
-# Handle the -Run switch
-if ($Run) {
-    Write-Host "Running config file tasks..."
-    $PARAM_RUN = $true
+$PARAM_NOUI = $false
+if ($Noui) {
+    $PARAM_NOUI = $true
 }
 
-# Load DLLs
-Add-Type -AssemblyName PresentationFramework
-Add-Type -AssemblyName System.Windows.Forms
+$PARAM_OFFLINE = $false
+if ($Offline) {
+    $PARAM_OFFLINE = $true
+}
 
-# Variable to sync between runspaces
-$sync = [Hashtable]::Synchronized(@{})
-$sync.PSScriptRoot = $PSScriptRoot
-$sync.version = "#{replaceme}"
-$sync.configs = @{}
-$sync.Buttons = [System.Collections.Generic.List[PSObject]]::new()
-$sync.ProcessRunning = $false
-$sync.selectedApps = [System.Collections.Generic.List[string]]::new()
-$sync.currentTab = "Install"
-$sync.selectedAppsStackPanel
-$sync.selectedAppsPopup
-
+if ($ExecutionContext.SessionState.LanguageMode -ne 'FullLanguage') {
+    Write-Host "WinUtil is unable to run on your system, powershell execution is restricted by security policies" -ForegroundColor Red
+    return
+}
 
 if (!([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
     Write-Output "Winutil needs to be run as Administrator. Attempting to relaunch."
@@ -77,10 +65,34 @@ if (!([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]:
     break
 }
 
+# Load DLLs
+Add-Type -AssemblyName PresentationFramework
+Add-Type -AssemblyName System.Windows.Forms
+
+# Variable to sync between runspaces
+$sync = [Hashtable]::Synchronized(@{})
+$sync.PSScriptRoot = $PSScriptRoot
+$sync.version = "#{replaceme}"
+$sync.configs = @{}
+$sync.Buttons = [System.Collections.Generic.List[PSObject]]::new()
+$sync.preferences = @{}
+$sync.ProcessRunning = $false
+$sync.selectedApps = [System.Collections.Generic.List[string]]::new()
+$sync.selectedTweaks = [System.Collections.Generic.List[string]]::new()
+$sync.selectedToggles = [System.Collections.Generic.List[string]]::new()
+$sync.selectedFeatures = [System.Collections.Generic.List[string]]::new()
+$sync.currentTab = "Install"
+$sync.selectedAppsStackPanel
+$sync.selectedAppsPopup
+
 $dateTime = Get-Date -Format "yyyy-MM-dd_HH-mm-ss"
 
-$logdir = "$env:localappdata\winutil\logs"
-[System.IO.Directory]::CreateDirectory("$logdir") | Out-Null
+# Set the path for the winutil directory
+$winutildir = "$env:LocalAppData\winutil"
+New-Item $winutildir -ItemType Directory -Force | Out-Null
+
+$logdir = "$winutildir\logs"
+New-Item $logdir -ItemType Directory -Force | Out-Null
 Start-Transcript -Path "$logdir\winutil_$dateTime.log" -Append -NoClobber | Out-Null
 
 # Set PowerShell window title
