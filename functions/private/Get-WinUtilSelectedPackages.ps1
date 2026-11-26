@@ -3,35 +3,62 @@ function Get-WinUtilSelectedPackages {
      param(
          [Parameter(Mandatory = $true)]
          [object] $PackageList,
-     
+
          [Parameter(Mandatory = $true)]
-         [PackageManagers] $Preference
+         [string] $Preference,
+
+         [ValidateSet("Install", "Uninstall")]
+         [string] $Action = "Install"
      )
 
+    # A single package has no meaningful percentage to show
     if ($PackageList.count -eq 1) {
-        Invoke-WPFUIThread -ScriptBlock { Set-WinUtilTaskbaritem -state "Indeterminate" -value 0.01 -overlay "logo" }
-    } else {
-        Invoke-WPFUIThread -ScriptBlock { Set-WinUtilTaskbaritem -state "Normal" -value 0.01 -overlay "logo" }
+        Step-WinUtilJob -State "Indeterminate"
     }
 
-    $packages = [System.Collections.Hashtable]::new()
     $packagesWinget = [System.Collections.ArrayList]::new()
     $packagesChoco = [System.Collections.ArrayList]::new()
+    $packages = @{
+        Winget = $packagesWinget
+        Choco = $packagesChoco
+    }
 
-    $packages[[PackageManagers]::Winget] = $packagesWinget
-    $packages[[PackageManagers]::Choco] = $packagesChoco
+    function Add-PackageId {
+        param(
+            [System.Collections.ArrayList]$Target,
+            $PackageId
+        )
+
+        # A config field may hold several IDs separated by ";" (e.g. a dependency;the package).
+        # Detection splits the same way, so install and detection agree on what gets installed.
+        $ids = [string]$PackageId -split ";"
+        if ($Action -eq "Uninstall") {
+            # Detection identifies the last ID as the app; preceding IDs are dependencies.
+            $ids = @($ids[-1])
+        }
+        foreach ($id in $ids) {
+            $id = $id.Trim()
+            if ([string]::IsNullOrWhiteSpace($id) -or $id -eq "na") {
+                continue
+            }
+
+            if (-not $Target.Contains($id)) {
+                $null = $Target.Add($id)
+            }
+        }
+    }
 
     foreach ($package in $PackageList) {
         switch ($Preference) {
             "Choco" {
-                if ($package.choco -eq "na") {
-                    $null = $packagesWinget.add($package.winget)
+                if ([string]::IsNullOrWhiteSpace([string]$package.choco) -or $package.choco -eq "na") {
+                    Add-PackageId -Target $packagesWinget -PackageId $package.winget
                 } else {
-                    $null = $packagesChoco.add($package.choco)
+                    Add-PackageId -Target $packagesChoco -PackageId $package.choco
                 }
             }
             "Winget" {
-                $null = $packagesWinget.add($package.winget)
+                Add-PackageId -Target $packagesWinget -PackageId $package.winget
             }
         }
     }

@@ -1,12 +1,25 @@
 function Invoke-WPFOOSU {
-    try {
-        $ProgressPreference = 'SilentlyContinue'
+    Start-WinUtilJob -Name "OOSU" -Description "Downloading O&O ShutUp10++" -Parameters @{
+        DownloadPath = Join-Path $sync.winutildir "ooshutup10.exe"
+    } -ScriptBlock {
+        param($DownloadPath)
 
-        Invoke-WebRequest -Uri https://dl5.oo-software.com/files/ooshutup10/OOSU10.exe -OutFile "$Env:Temp\ooshutup10.exe"
-        Start-Process -FilePath "$Env:Temp\ooshutup10.exe"
+        Write-WinUtilLog -Component "OOSU" -Message "Downloading O&O ShutUp10++."
 
-        $ProgressPreference = 'Continue'
-    } catch {
-        Write-Error "Couldn't download O&O ShutUp10. Please make sure you have an active internet connection."
+        Save-WinUtilFile -Uri "https://dl5.oo-software.com/files/ooshutup10/OOSU10.exe" -DestinationPath $DownloadPath -ProgressCallback {
+            param($percent, $totalBytes)
+
+            # The server may omit Content-Length, in which case only the percentage is known
+            $progress = if ($totalBytes -gt 0) {
+                "$percent% of $([math]::Round($totalBytes / 1MB)) MB"
+            } else {
+                "$percent%"
+            }
+            Step-WinUtilJob -Status "Downloading O&O ShutUp10++ ($progress)" -Percent $percent
+        }
+
+        Step-WinUtilJob -Status "Launching O&O ShutUp10++" -Percent 100
+        Start-Process -FilePath $DownloadPath
+        Write-WinUtilLog -Component "OOSU" -Message "O&O ShutUp10++ launched."
     }
 }

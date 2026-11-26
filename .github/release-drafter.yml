@@ -1,19 +1,21 @@
 tag-prefix: ''
 categories:
-  - title: '🚀 Features'
+  - title: 'Features'
     labels:
       - 'feature'
       - 'enhancement'
       - 'new feature'
-  - title: '🐛 Bug Fixes'
+  - title: 'Bug Fixes'
     labels:
       - 'hotfix'
       - 'bugfix'
       - 'bug'
-  - title: '📚 Documentation'
-    label: 'documentation'
-  - title: '🎨 UI/UX Improvements'
-    label: 'ui update'
+  - title: 'UI/UX Improvements'
+    labels:
+      - 'ui update'
+      - 'ui-ux'
+  - title: 'Slop cleaning'
+    label: 'chore'
 change-template: '- $TITLE @$AUTHOR (#$NUMBER)'
 template: |
   ## Changes
@@ -48,5 +50,6 @@ replacers:
     replace: ''
 exclude-labels:
   - 'skip-changelog'
+  - 'automated'
 
 filter-by-commitish: true

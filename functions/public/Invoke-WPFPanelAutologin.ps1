@@ -1,4 +1,5 @@
 function Invoke-WPFPanelAutologin {
-    Invoke-WebRequest -Uri https://live.sysinternals.com/Autologon.exe -OutFile "$Env:Temp\autologin.exe"
-    Start-Process -FilePath "$Env:Temp\autologin.exe" -ArgumentList /accepteula
+    $autologonPath = Join-Path $sync.winutildir "autologin.exe"
+    Invoke-WebRequest -Uri https://live.sysinternals.com/Autologon.exe -OutFile $autologonPath
+    Start-Process -FilePath $autologonPath -ArgumentList /accepteula
 }

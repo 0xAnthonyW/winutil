@@ -21,6 +21,14 @@
                     <Order>3</Order>
                     <Path>reg.exe add "HKLM\SYSTEM\Setup\LabConfig" /v BypassRAMCheck /t REG_DWORD /d 1 /f</Path>
                 </RunSynchronousCommand>
+                <RunSynchronousCommand wcm:action="add">
+                    <Order>4</Order>
+                    <Path>reg.exe add "HKLM\SYSTEM\Setup\LabConfig" /v BypassCPUCheck /t REG_DWORD /d 1 /f</Path>
+                </RunSynchronousCommand>
+                <RunSynchronousCommand wcm:action="add">
+                    <Order>5</Order>
+                    <Path>reg.exe add "HKLM\SYSTEM\Setup\LabConfig" /v BypassStorageCheck /t REG_DWORD /d 1 /f</Path>
+                </RunSynchronousCommand>
             </RunSynchronous>
         </component>
     </settings>
@@ -47,6 +55,18 @@
                 <RunSynchronousCommand wcm:action="add">
                     <Order>5</Order>
                     <Path>reg.exe unload "HKU\DefaultUser"</Path>
+                </RunSynchronousCommand>
+                <RunSynchronousCommand wcm:action="add">
+                    <Order>6</Order>
+                    <Path>reg.exe add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\OOBE" /v BypassNRO /t REG_DWORD /d 1 /f</Path>
+                </RunSynchronousCommand>
+                <RunSynchronousCommand wcm:action="add">
+                    <Order>7</Order>
+                    <Path>reg.exe add "HKLM\SYSTEM\CurrentControlSet\Control\BitLocker" /v PreventDeviceEncryption /t REG_DWORD /d 1 /f</Path>
+                </RunSynchronousCommand>
+                <RunSynchronousCommand wcm:action="add">
+                    <Order>8</Order>
+                    <Path>reg.exe add "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\ReserveManager" /v ShippedWithReserves /t REG_DWORD /d 0 /f</Path>
                 </RunSynchronousCommand>
             </RunSynchronous>
         </component>
@@ -303,6 +323,36 @@ $scripts = @(
     };
     {
         reg.exe add "HKCU\Software\Classes\CLSID\{86ca1aa0-34aa-4e8b-a509-50c905bae2a2}\InprocServer32" /ve /f;
+        $createdClassicMenuKey = $null;
+        try {
+            $classicMenuPath = 'HKCU:\Software\Classes\CLSID\{51668040-5e31-4023-bbe3-149163bd80f1}';
+            if (-not (Test-Path -LiteralPath $classicMenuPath -ErrorAction Stop)) {
+                $createdClassicMenuKey = New-Item -Path $classicMenuPath -ErrorAction Stop;
+                New-ItemProperty -LiteralPath $classicMenuPath -Name 'WinUtilClassicContextMenu' -Value 1 -PropertyType DWord -ErrorAction Stop | Out-Null;
+            };
+            $classicMenuKey = Get-Item -LiteralPath $classicMenuPath -ErrorAction Stop;
+            $classicMenuMarker = $classicMenuKey.GetValue('WinUtilClassicContextMenu');
+            if ($classicMenuMarker -is [int] -and $classicMenuMarker -eq 1) {
+                $classicMenuServer = "$classicMenuPath\InprocServer32";
+                if (-not (Test-Path -LiteralPath $classicMenuServer -ErrorAction Stop)) {
+                    New-Item -Path $classicMenuServer -Value '' -ErrorAction Stop | Out-Null;
+                } else {
+                    $classicMenuServerKey = Get-Item -LiteralPath $classicMenuServer -ErrorAction Stop;
+                    if ($classicMenuServerKey.ValueCount -eq 0 -and $classicMenuServerKey.SubKeyCount -eq 0) {
+                        Set-Item -LiteralPath $classicMenuServer -Value '' -Force -ErrorAction Stop;
+                    };
+                };
+            };
+        } catch {
+            Write-Warning "Could not apply the newer classic context menu workaround: $($_.Exception.Message)";
+            if ($null -ne $createdClassicMenuKey -and $createdClassicMenuKey.ValueCount -eq 0 -and $createdClassicMenuKey.SubKeyCount -eq 0) {
+                try {
+                    Remove-Item -LiteralPath $classicMenuPath -ErrorAction Stop;
+                } catch {
+                    Write-Warning "Could not remove the empty classic context menu key: $($_.Exception.Message)";
+                };
+            };
+        };
     };
     {
         Set-ItemProperty -LiteralPath 'Registry::HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced' -Name 'LaunchTo' -Type 'DWord' -Value 1;
@@ -332,9 +382,6 @@ $scripts = @(
         reg.exe add "HKCU\Software\Microsoft\Windows\CurrentVersion\Start" /v ShowRecentList /t REG_DWORD /d 0 /f;
         reg.exe add "HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced" /v Start_TrackDocs /t REG_DWORD /d 0 /f;
     };
-    {
-        Restart-Computer -Force;
-    };
 );
 
 &amp; {
@@ -358,6 +405,11 @@ $scripts = @(
     $complete += $increment;
   }
 } *&gt;&amp;1 | Out-String -Width 1KB -Stream &gt;&gt; "$env:TEMP\UserOnce.log";
+
+# RunOnce and FirstLogonCommands can overlap. Publish completion after the log is flushed.
+$completionDir = Join-Path $env:LOCALAPPDATA 'WinUtil';
+[System.IO.Directory]::CreateDirectory($completionDir) | Out-Null;
+[System.IO.File]::WriteAllText((Join-Path $completionDir 'UserOnce.complete'), '');
         </File>
         <File path="C:\Windows\Setup\Scripts\DefaultUser.ps1">
 $scripts = @(
@@ -433,10 +485,11 @@ $scripts = @(
         reg.exe delete "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\DeliveryOptimization\Config" /v DODownloadMode /f;
         reg.exe add "HKLM\Software\Policies\Microsoft\Windows\OneDrive" /v DisableFileSyncNGSC /t REG_DWORD /d 0 /f;
         reg.exe add "HKCU\Software\Microsoft\Windows\CurrentVersion\GameDVR" /v AppCaptureEnabled /t REG_DWORD /d 0 /f;
-        reg.exe add "HKLM\SYSTEM\CurrentControlSet\Services\BITS" /v Start /t REG_DWORD /d 3 /f;
-        reg.exe add "HKLM\SYSTEM\CurrentControlSet\Services\wuauserv" /v Start /t REG_DWORD /d 3 /f;
-        reg.exe add "HKLM\SYSTEM\CurrentControlSet\Services\UsoSvc" /v Start /t REG_DWORD /d 2 /f;
-        reg.exe add "HKLM\SYSTEM\CurrentControlSet\Services\WaaSMedicSvc" /v Start /t REG_DWORD /d 3 /f;
+        $services = @{ BITS = 'Manual'; wuauserv = 'Manual'; UsoSvc = 'Automatic' };
+        foreach ($name in $services.Keys) {
+            Set-Service -Name $name -StartupType $services[$name] -ErrorAction Continue;
+        }
+        Set-ItemProperty -Path 'HKLM:\SYSTEM\CurrentControlSet\Services\WaaSMedicSvc' -Name 'Start' -Value 3 -Type DWord -ErrorAction Continue;
     };
     {
         reg.exe add "HKLM\SOFTWARE\Microsoft\PolicyManager\current\device\Education" /f;
@@ -449,7 +502,7 @@ $scripts = @(
     {
         $recallFeature = Get-WindowsOptionalFeature -Online -ErrorAction SilentlyContinue | Where-Object { $_.State -eq 'Enabled' -and $_.FeatureName -like 'Recall' };
         if( $recallFeature ) {
-            Disable-WindowsOptionalFeature -Online -FeatureName 'Recall' -Remove -ErrorAction SilentlyContinue;
+            Disable-WindowsOptionalFeature -Online -FeatureName 'Recall' -Remove -NoRestart -ErrorAction SilentlyContinue;
         }
     };
     {
@@ -462,7 +515,7 @@ $scripts = @(
         Remove-Item -Path $viveDir -Recurse -Force;
     };
     {
-        Start-Process C:\Windows\System32\OneDriveSetup.exe -ArgumentList /uninstall
+        Start-Process C:\Windows\System32\OneDriveSetup.exe -ArgumentList /uninstall -Wait
     };
     {
         if( (Get-BitLockerVolume -MountPoint $Env:SystemDrive).ProtectionStatus -eq 'On' ) {
@@ -497,6 +550,23 @@ $scripts = @(
     $complete += $increment;
   }
 } *&gt;&amp;1 | Out-String -Width 1KB -Stream &gt;&gt; "C:\Windows\Setup\Scripts\FirstLogon.log";
+
+# UserOnce may finish first, so keep any completion flag it has already written.
+$completionPath = Join-Path $env:LOCALAPPDATA 'WinUtil\UserOnce.complete';
+$deadline = (Get-Date).AddMinutes(5);
+'WinUtil: Waiting for user configuration to finish before restarting (up to 5 minutes).' | Out-File -LiteralPath 'C:\Windows\Setup\Scripts\FirstLogon.log' -Append -ErrorAction Stop;
+while( -not (Test-Path -LiteralPath $completionPath -PathType Leaf) ) {
+    if( (Get-Date) -ge $deadline ) {
+        $message = 'WinUtil: Timed out waiting for user configuration. Automatic restart skipped. Check %TEMP%\UserOnce.log.';
+        $message | Out-File -LiteralPath 'C:\Windows\Setup\Scripts\FirstLogon.log' -Append -ErrorAction Stop;
+        return;
+    }
+    Start-Sleep -Seconds 1;
+}
+
+$message = 'WinUtil: First-logon customization complete. Restarting the computer.';
+$message | Out-File -LiteralPath 'C:\Windows\Setup\Scripts\FirstLogon.log' -Append -ErrorAction Stop;
+Restart-Computer -Force;
         </File>
     </Extensions>
 </unattend>

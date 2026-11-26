@@ -29,6 +29,8 @@ function Invoke-WinUtilFontScaling {
         "FontSize",
         "ButtonFontSize",
         "HeaderFontSize",
+        "Win11StepTitleFontSize",
+        "Win11StepHeroFontSize",
         "TabButtonFontSize",
         "ConfigTabButtonFontSize",
         "IconFontSize",
@@ -73,6 +75,12 @@ function Invoke-WinUtilFontScaling {
             Write-Warning "Failed to scale resource $resourceName : $_"
         }
     }
+
+    # Store the scale factor so it can be reapplied after theme changes
+    $sync.FontScaleFactor = $ScaleFactor
+
+    # The minimum card width just changed, so the cards have to be fitted to the row again
+    Update-WinUtilAppEntryWidth
 
     # Update the font scaling percentage displayed on the UI
     if ($sync.FontScalingValue) {
